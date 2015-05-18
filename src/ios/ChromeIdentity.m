@@ -76,6 +76,7 @@ static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelect
     if ([[authentication accessToken] isEqualToString:token]) {
         [authentication setAccessToken:nil];
         [authentication authorizeRequest:nil completionHandler:nil];
+        [[GPPSignIn sharedInstance] signOut];
     }
 
     if (signOut) {

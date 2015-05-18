@@ -283,6 +283,7 @@ public class ChromeIdentity extends CordovaPlugin {
             cachedAccountName = null;
         }
         try {
+            cachedAccountName = null;
             Context context = cordova.getActivity();
             GoogleAuthUtil.clearToken(context, token);
             callbackContext.success();
