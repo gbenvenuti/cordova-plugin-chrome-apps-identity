@@ -4,8 +4,8 @@
 
 #import <Cordova/CDVPlugin.h>
 #import <Foundation/Foundation.h>
+#import <GoogleSignIn/GoogleSignIn.h>
 #import <GoogleOpenSource/GoogleOpenSource.h>
-#import <GooglePlus/GooglePlus.h>
 #import "AppDelegate.h"
 
 #if CHROME_IDENTITY_VERBOSE_LOGGING
@@ -14,8 +14,9 @@
 #define VERBOSE_LOG(args...) do {} while (false)
 #endif
 
-@interface ChromeIdentity : CDVPlugin <GPPSignInDelegate>
+@interface ChromeIdentity : CDVPlugin <GIDSignInDelegate, GIDSignInUIDelegate>
 @property (nonatomic, copy) NSString* callbackId;
+@property BOOL interactive;
 @end
 
 static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelector);
@@ -33,9 +34,9 @@ static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelect
            sourceApplication: (NSString *)sourceApplication
                   annotation: (id)annotation {
     [self identity_application:application openURL:url sourceApplication:sourceApplication annotation:annotation];
-    return [GPPURLHandler handleURL:url
-                  sourceApplication:sourceApplication
-                         annotation:annotation];
+    return [[GIDSignIn sharedInstance] handleURL:url
+                               sourceApplication:sourceApplication
+                                      annotation:annotation];
 }
 
 @end
@@ -44,51 +45,63 @@ static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelect
 
 - (void)pluginInitialize
 {
-    GPPSignIn *signIn = [GPPSignIn sharedInstance];
-    [signIn setShouldFetchGoogleUserEmail:YES];
-    [signIn setShouldFetchGooglePlusUser:YES];
+    GIDSignIn *signIn = [GIDSignIn sharedInstance];
+    signIn.shouldFetchBasicProfile = YES;
+    signIn.allowsSignInWithWebView = YES;
+    // Apple will not approve apps that use safari to login
+    signIn.allowsSignInWithBrowser = NO;
     [signIn setDelegate:self];
+    [signIn setUiDelegate: self];
 }
 
 - (void)getAuthToken:(CDVInvokedUrlCommand*)command
 {
     // Save the callback id for later.
     [self setCallbackId:[command callbackId]];
+    self.interactive = [[command argumentAtIndex:0] boolValue];
     NSString* clientId = [command argumentAtIndex:1];
     NSArray* scopes = [command argumentAtIndex:2];
 
     // Extract the OAuth2 data.
-    GPPSignIn *signIn = [GPPSignIn sharedInstance];
+    GIDSignIn *signIn = [GIDSignIn sharedInstance];
     [signIn setClientID:clientId];
     [signIn setScopes:scopes];
 
     // Authenticate!
-    [signIn authenticate];
+    if (self.interactive) {
+        [signIn signIn];
+    } else {
+        [signIn signInSilently];
+    }
 }
 
 - (void)removeCachedAuthToken:(CDVInvokedUrlCommand*)command
 {
-    NSString *token = [command argumentAtIndex:0];
+    //NSString *token = [command argumentAtIndex:0];
     BOOL signOut = [[command argumentAtIndex:1] boolValue];
-    GTMOAuth2Authentication *authentication = [[GPPSignIn sharedInstance] authentication];
+    //GIDGoogleUser *googleUser = [[GIDSignIn sharedInstance] currentUser];
+    //GIDAuthentication *authentication = [googleUser authentication];
 
     // If the token to revoke is the same as the one we have cached, trigger a refresh.
-    if ([[authentication accessToken] isEqualToString:token]) {
-        [authentication setAccessToken:nil];
-        [authentication authorizeRequest:nil completionHandler:nil];
-    }
+
+    // TODO - not sure how to handle this with the google sign-in,
+    // @see https://github.com/MobileChromeApps/cordova-plugin-chrome-apps-identity/issues/5#issuecomment-113340923
+    // properties are read-only
+    //    if ([[authentication accessToken] isEqualToString:token]) {
+    //        [authentication setAccessToken:nil];
+    //        [authentication authorizeRequest:nil completionHandler:nil];
+    //    }
 
     if (signOut) {
-        [[GPPSignIn sharedInstance] signOut];
-    }
+        // save callbackId, to be used in signIn: didDisconnectWithUser
+        [self setCallbackId:[command callbackId]];
+        [[GIDSignIn sharedInstance] disconnect];
 
-    if (signOut) {
-        [[GPPSignIn sharedInstance] signOut];
+    } else {
+        // Call the callback.
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        [[self commandDelegate] sendPluginResult:pluginResult callbackId:[command callbackId]];
     }
-
-    // Call the callback.
-    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-    [[self commandDelegate] sendPluginResult:pluginResult callbackId:[command callbackId]];
 }
 
 - (void)getAccounts:(CDVInvokedUrlCommand*)command
@@ -97,27 +110,53 @@ static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelect
     [[self commandDelegate] sendPluginResult:pluginResult callbackId:[command callbackId]];
 }
 
-#pragma mark GPPSignInDelegate
+#pragma mark GIDSignInDelegate
 
-- (void)finishedWithAuth:(GTMOAuth2Authentication *)auth error:(NSError *) error
-{
+- (void)signIn:(GIDSignIn *)signIn didSignInForUser:(GIDGoogleUser *)user withError:(NSError *)error {
     NSString* callbackId = self.callbackId;
+    CDVPluginResult *pluginResult;
     self.callbackId = nil;
-    if (auth == nil) {
-        // Assume user cancelled. error object just has -1 - Unknown Error in this case.
-        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsInt:-4];
-        [[self commandDelegate] sendPluginResult:pluginResult callbackId:callbackId];
+
+    if (user == nil) {
+        // an error on non-interactive mode should not return user cancelled, so we'll return:
+        // -2 : "The request requires options.interactive=true"
+        int errorCode = self.interactive ? -4 : -2;
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsInt: errorCode];
+
     } else {
         // Compile the results.
         NSDictionary *resultDictionary = [[NSMutableDictionary alloc] init];
-        [resultDictionary setValue:[auth userEmail] forKey:@"account"];
-        [resultDictionary setValue:[auth accessToken] forKey:@"token"];
+        [resultDictionary setValue:[user.profile email] forKey:@"account"];
+        [resultDictionary setValue:[user.authentication accessToken] forKey:@"token"];
 
         // Pass the results to the callback.
-        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:resultDictionary];
-        [[self commandDelegate] sendPluginResult:pluginResult callbackId:callbackId];
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:resultDictionary];
+    }
+    [[self commandDelegate] sendPluginResult:pluginResult callbackId:callbackId];
+}
+
+- (void)signIn:(GIDSignIn *)signIn didDisconnectWithUser:(GIDGoogleUser *)user withError:(NSError *)error {
+    NSString* callbackId = self.callbackId;
+    CDVPluginResult *pluginResult;
+    self.callbackId = nil;
+
+    if (error == nil) {
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+    } else {
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsInt: (int)error.code];
     }
 
+    [[self commandDelegate] sendPluginResult:pluginResult callbackId: callbackId];
+}
+
+#pragma mark GIDSignInUIDelegate
+
+- (void)signIn:(GIDSignIn *)signIn presentViewController:(UIViewController *)viewController {
+    [[self viewController] presentViewController:viewController animated:YES completion:nil];
+};
+
+- (void)signIn:(GIDSignIn *)signIn dismissViewController:(UIViewController *)viewController {
+    [viewController dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark Swizzling

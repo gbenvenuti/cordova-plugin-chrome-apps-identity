@@ -20,7 +20,7 @@
   <dependency id="cordova-plugin-chrome-apps-runtime@1" />
   <dependency id="cordova-plugin-inappbrowser@1" />
   <dependency id="cordova-plugin-google-open-source-ios" />
-  <dependency id="cordova-plugin-google-plus-ios" />
+  <dependency id="cordova-plugin-google-sign-in-ios" />
 
   <js-module src="identity.js" name="Identity">
     <clobbers target="chrome.identity" />
