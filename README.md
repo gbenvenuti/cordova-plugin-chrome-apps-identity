@@ -2,7 +2,7 @@
 
 This plugin provides OAuth2 authentication for Android and iOS.
 
-On Android, this plugin uses Google Play Services; on iOS, it uses Google+.
+On Android, this plugin uses Google Play Services; on iOS, it uses Google Sign-in.
 
 ## Status
 
@@ -89,7 +89,9 @@ Note that this requires pasting your Chrome app's `key` value into `manifest.jso
 
 ### iOS
 
-For iOS, first follow **Step 1** of the instructions [here](https://developers.google.com/+/mobile/ios/getting-started#step_1_creating_the_apis_console_project).
+Get a configuration file for your app
+
+https://developers.google.com/mobile/add?platform=ios&cntapi=signin
 
 **Note:** If you change your app's bundle identifier at any time, you will need to correspondingly update the bundle identifier in the following places:
 
